@@ -1,0 +1,25 @@
+{
+    "defaultSeverity": "error",
+    "compilerOptions": {
+        "await-promise": true,
+        "semicolon": [
+            false,
+            "never"
+        ],
+        "noUnusedLocals": false,
+        "noUnusedParameters": false,
+        "max-file-line-count": false,
+        "type-literal-delimiter": [
+            false
+        ]
+    },
+    "jsRules": {},
+    "rules": {
+        "await-promise": false,
+        "no-return-await": false,
+        "promise-function-async": false,
+        "no-floating-promises": true,
+        "no-unused-expression": false
+    },
+    "rulesDirectory": []
+}

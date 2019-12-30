@@ -1,0 +1,36 @@
+{
+    "compileOnSave": true,
+    "compilerOptions": {
+        // Libs are from https://github.com/Microsoft/TypeScript/tree/master/src/lib
+        "lib": [
+            "ESNext",
+        ],
+        "module": "commonjs",
+        "moduleResolution": "node",
+        "target": "ESNext",
+        "experimentalDecorators": true,
+        "noImplicitAny": true,
+        "removeComments": false,
+        "sourceMap": true,
+        "inlineSources": true,
+        //"inlineSourceMap": true,
+        "alwaysStrict": true,
+        "forceConsistentCasingInFileNames": true,
+        "noFallthroughCasesInSwitch": true,
+        "noImplicitReturns": true,
+        "noImplicitThis": true,
+        "noUnusedLocals": true,
+        "strictNullChecks": true,
+        "skipLibCheck": true,
+        "strictPropertyInitialization": true,
+        "watch": false,
+        "outDir": "./out"
+    },
+    "include": [
+        "**/*.ts"
+    ],
+    "exclude": [
+        // Here's why it still picks those up: https://github.com/Microsoft/TypeScript/wiki/FAQ#why-is-a-file-in-the-exclude-list-still-picked-up-by-the-compiler
+        "node_modules"
+    ]
+}
