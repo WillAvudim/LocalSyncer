@@ -1,6 +1,3 @@
-/*
-  Does NOT track NEW files added in the root directory after the program is started. Those are picked up only once at the app start.
-*/
 import * as fs from 'fs'
 import * as path from 'path'
 import * as util from 'util'
@@ -12,7 +9,6 @@ import { AsyncWorker } from "./mq3"
 import { TransformBackward, TransformForward } from "./transformation"
 
 
-const fs_readdir = util.promisify(fs.readdir)
 const fs_stat = util.promisify(fs.stat)
 const fs_access = util.promisify(fs.access)
 const fs_utimes = util.promisify(fs.utimes)
@@ -22,13 +18,7 @@ const SRC_PATH: string = `/storage/mono`
 const TARGET_PATH: string = `/storage/Dropbox/mono`
 const STATE_LOCATION: string = path.join(os.homedir(), `.dropbox_serializer_state`)
 
-const IGNORE_SUB_OBJECTS: string[] = [
-  `out`,
-  `node_modules`,
-  `package-lock.json`
-]
-
-const IGNORED_GLOBABLLY = /\/(\.ropeproject|__pycache__|\.ipynb_checkpoints)\//
+const IGNORED_OBJECTS: string[] = ["**/out/**", "**/node_modules/**", "**/package-lock.json", "**/.ropeproject/**", "**/__pycache__/**", "**/.ipynb_checkpoints/**"]
 
 type FSSetOfSources = { [full_path: string]: number }
 type FileTransformer = (from_path: string, to_path: string) => Promise<void>
@@ -41,8 +31,6 @@ let serialized_states = new class {
 const serializer = new AsyncWorker(async () => {
   await fse.writeJSON(STATE_LOCATION, serialized_states)
 })
-
-const ignored_sub_map: { [name: string]: boolean } = ToObject(IGNORE_SUB_OBJECTS, v => v, v => true)
 
 
 async function MonitorAtAndCopyTo(at: string, to: string, sources: FSSetOfSources, transformer: FileTransformer): Promise<void> {
@@ -60,14 +48,8 @@ async function MonitorAtAndCopyTo(at: string, to: string, sources: FSSetOfSource
 
   serializer.Trigger()
 
-  const root_entries: string[] = await fs_readdir(at)
-  const paths_to_monitor: string[] = []
-  for (const entry of root_entries) {
-    if (ignored_sub_map[entry] || entry.match(IGNORED_GLOBABLLY)) continue
-    paths_to_monitor.push(path.join(at, entry))
-  }
-
-  const watcher = chokidar.watch(paths_to_monitor, {
+  const watcher = chokidar.watch(at, {
+    ignored: IGNORED_OBJECTS,
     depth: 25,
     ignoreInitial: false,
     alwaysStat: true,
@@ -108,15 +90,9 @@ async function MonitorAtAndCopyTo(at: string, to: string, sources: FSSetOfSource
 
 async function ProcessWatcherEvent(full_path: string, stats: fs.Stats | undefined, to_full_path: string, sources: FSSetOfSources, transformer: FileTransformer): Promise<void> {
 
-  if (full_path.match(IGNORED_GLOBABLLY)) {
-    console.log(`Ignored globally: ${full_path}`)
-    return
-  }
-
   if (!stats) {
     console.log(`DELETING ${to_full_path}`)
     // Triggered when the file has just been deleted.
-    debugger  // DO: verify the delete below
     await fse.remove(to_full_path)
 
     delete sources[full_path]
@@ -179,18 +155,6 @@ async function CompareAndCopy(from: string, from_stats: fs.Stats, to: string, so
 
 function FileMissingException(ex: any): boolean {
   return ex?.code == "ENOENT"
-}
-
-
-function ToObject<ArrayType, MapValueType>(array: ArrayType[] | Iterable<ArrayType>, produce_key_fn: (e: ArrayType) => string | number, produce_value_fn: (e: ArrayType) => MapValueType | undefined): { [key: string]: MapValueType } {
-
-  const o: { [key: string]: MapValueType } = Object.create(null)
-  for (const element of array) {
-    const value: any = produce_value_fn(element)
-    if (value !== undefined) o[produce_key_fn(element)] = value
-  }
-
-  return o
 }
 
 
