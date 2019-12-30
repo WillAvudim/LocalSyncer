@@ -10,7 +10,6 @@
       "name": "main.ts",
       "protocol": "inspector",
       "args": [
-        // "${relativeFile}"
         "main.ts"
       ],
       "cwd": "${workspaceRoot}",

@@ -9,11 +9,13 @@ import * as os from 'os'
 import * as chokidar from 'chokidar'
 import * as fse from 'fs-extra'
 import { AsyncWorker } from "./mq3"
+import { TransformBackward, TransformForward } from "./transformation"
 
 
-export const fs_readdir = util.promisify(fs.readdir)
-export const fs_stat = util.promisify(fs.stat)
-export const fs_access = util.promisify(fs.access)
+const fs_readdir = util.promisify(fs.readdir)
+const fs_stat = util.promisify(fs.stat)
+const fs_access = util.promisify(fs.access)
+const fs_utimes = util.promisify(fs.utimes)
 
 
 const SRC_PATH: string = `/storage/mono`
@@ -29,6 +31,7 @@ const IGNORE_SUB_OBJECTS: string[] = [
 const IGNORED_GLOBABLLY = /\/(\.ropeproject|__pycache__|\.ipynb_checkpoints)\//
 
 type FSSetOfSources = { [full_path: string]: number }
+type FileTransformer = (from_path: string, to_path: string) => Promise<void>
 
 /** Lists source files that are known to have been copied to the target location before. */
 let serialized_states = new class {
@@ -42,7 +45,7 @@ const serializer = new AsyncWorker(async () => {
 const ignored_sub_map: { [name: string]: boolean } = ToObject(IGNORE_SUB_OBJECTS, v => v, v => true)
 
 
-async function MonitorAtAndCopyTo(at: string, to: string, sources: FSSetOfSources): Promise<void> {
+async function MonitorAtAndCopyTo(at: string, to: string, sources: FSSetOfSources, transformer: FileTransformer): Promise<void> {
 
   // Lose entries for the no longer existing source files.
   for (const full_path of Object.keys(sources)) {
@@ -54,6 +57,7 @@ async function MonitorAtAndCopyTo(at: string, to: string, sources: FSSetOfSource
       delete sources[full_path]
     }
   }
+
   serializer.Trigger()
 
   const root_entries: string[] = await fs_readdir(at)
@@ -73,6 +77,7 @@ async function MonitorAtAndCopyTo(at: string, to: string, sources: FSSetOfSource
       pollInterval: 1000
     },
   })
+
   watcher.on("all", async (event_name, full_path, stats) => {
     // If the stats is missing, it might be something atomically renaming/replacing it, so let's give it a few chances, it might reappear.
     if (!stats) {
@@ -93,7 +98,7 @@ async function MonitorAtAndCopyTo(at: string, to: string, sources: FSSetOfSource
 
     const to_full_path: string = full_path.replace(at, to)
     try {
-      await ProcessWatcherEvent(full_path, stats, to_full_path, sources)
+      await ProcessWatcherEvent(full_path, stats, to_full_path, sources, transformer)
     } catch (ex) {
       console.error(ex.stack)
     }
@@ -101,7 +106,7 @@ async function MonitorAtAndCopyTo(at: string, to: string, sources: FSSetOfSource
 }
 
 
-async function ProcessWatcherEvent(full_path: string, stats: fs.Stats | undefined, to_full_path: string, sources: FSSetOfSources): Promise<void> {
+async function ProcessWatcherEvent(full_path: string, stats: fs.Stats | undefined, to_full_path: string, sources: FSSetOfSources, transformer: FileTransformer): Promise<void> {
 
   if (full_path.match(IGNORED_GLOBABLLY)) {
     console.log(`Ignored globally: ${full_path}`)
@@ -118,26 +123,27 @@ async function ProcessWatcherEvent(full_path: string, stats: fs.Stats | undefine
     serializer.Trigger()
     return
   }
-  if (!stats.isFile()) {
-    // console.log(`Ignored (not a file): ${full_path}`)
-    return
-  }
+
+  if (!stats.isFile()) return
+
   if (stats.isSymbolicLink() || stats.isSocket()) {
     console.log(`Ignored (symbolic or socket): ${full_path}`)
     return
   }
 
-  await CompareAndCopy(full_path, stats, to_full_path, sources)
+  await CompareAndCopy(full_path, stats, to_full_path, sources, transformer)
 }
 
 
-async function CompareAndCopy(from: string, from_stats: fs.Stats, to: string, sources: FSSetOfSources): Promise<void> {
+async function CompareAndCopy(from: string, from_stats: fs.Stats, to: string, sources: FSSetOfSources, transformer: FileTransformer): Promise<void> {
   try {
     const to_stats = await fs_stat(to)
 
     if (from_stats.mtimeMs > to_stats.mtimeMs) {
       console.log(`COPYING ${from} -> ${to}`)
-      await fse.copy(from, to, { preserveTimestamps: true })
+      await transformer(from, to)
+      // Preserve original timestamps.
+      await fs_utimes(to, from_stats.atime, from_stats.mtime)
     }
 
     sources[from] = 1
@@ -155,7 +161,10 @@ async function CompareAndCopy(from: string, from_stats: fs.Stats, to: string, so
         // A new file, copy.
         console.log(`NEW: ${from} -> ${to}`)
         await fse.ensureDir(path.dirname(to))
-        await fse.copy(from, to, { preserveTimestamps: true })
+        await transformer(from, to)
+        // Preserve original timestamps.
+        await fs_utimes(to, from_stats.atime, from_stats.mtime)
+
         sources[from] = 1
         serializer.Trigger()
       }
@@ -195,8 +204,8 @@ async function Initialize(): Promise<void> {
     }
   }
 
-  MonitorAtAndCopyTo(SRC_PATH, TARGET_PATH, serialized_states.from_source).catch(ex => console.error(ex.stack))
-  MonitorAtAndCopyTo(TARGET_PATH, SRC_PATH, serialized_states.from_target).catch(ex => console.error(ex.stack))
+  MonitorAtAndCopyTo(SRC_PATH, TARGET_PATH, serialized_states.from_source, TransformForward).catch(ex => console.error(ex.stack))
+  MonitorAtAndCopyTo(TARGET_PATH, SRC_PATH, serialized_states.from_target, TransformBackward).catch(ex => console.error(ex.stack))
 }
 
 
