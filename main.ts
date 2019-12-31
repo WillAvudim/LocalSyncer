@@ -7,6 +7,7 @@ import * as chokidar from 'chokidar'
 import * as fse from 'fs-extra'
 import { AsyncWorker } from "./mq3"
 import { TransformBackward, TransformForward } from "./transformation"
+import { ScheduleOrExecute } from "./concurrency_thottler"
 
 
 const fs_stat = util.promisify(fs.stat)
@@ -116,33 +117,39 @@ async function CompareAndCopy(from: string, from_stats: fs.Stats, to: string, so
     const to_stats = await fs_stat(to)
 
     if (from_stats.mtimeMs > to_stats.mtimeMs) {
-      console.log(`COPYING ${from} -> ${to}`)
-      await transformer(from, to)
-      // Preserve original timestamps.
-      await fs_utimes(to, from_stats.atime, from_stats.mtime)
-    }
-
-    sources[from] = 1
-    serializer.Trigger()
-  } catch (ex) {
-    if (FileMissingException(ex)) {
-      if (sources[from]) {
-        debugger  // DO:
-        // Deleted from the target location, delete locally.
-        console.log(`DELETED AT TARGET: x ${from}`)
-        await fse.remove(from)
-        delete sources[from]
-        serializer.Trigger()
-      } else {
-        // A new file, copy.
-        console.log(`NEW: ${from} -> ${to}`)
-        await fse.ensureDir(path.dirname(to))
+      await ScheduleOrExecute(async () => {
+        console.log(`COPYING ${from} -> ${to}`)
         await transformer(from, to)
         // Preserve original timestamps.
         await fs_utimes(to, from_stats.atime, from_stats.mtime)
 
         sources[from] = 1
         serializer.Trigger()
+      })
+    } else {
+      sources[from] = 1
+      serializer.Trigger()
+    }
+  } catch (ex) {
+    if (FileMissingException(ex)) {
+      if (sources[from]) {
+        // Deleted from the target location, delete locally.
+        console.log(`DELETED AT TARGET: x ${from}`)
+        await fse.remove(from)
+        delete sources[from]
+        serializer.Trigger()
+      } else {
+        await ScheduleOrExecute(async () => {
+          // A new file, copy.
+          console.log(`NEW: ${from} -> ${to}`)
+          await fse.ensureDir(path.dirname(to))
+          await transformer(from, to)
+          // Preserve original timestamps.
+          await fs_utimes(to, from_stats.atime, from_stats.mtime)
+
+          sources[from] = 1
+          serializer.Trigger()
+        })
       }
 
       return
